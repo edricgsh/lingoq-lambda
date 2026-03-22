@@ -1,5 +1,6 @@
 #!/bin/bash
 set -e
+export AWS_PAGER=""
 
 FUNCTION_NAME="lingoq-subtitle-extractor"
 REGION="us-east-1"
