@@ -1,4 +1,4 @@
-FUNCTION_NAME = learn-spanish-subtitle-extractor
+FUNCTION_NAME = lingoq-subtitle-extractor
 REGION = us-east-1
 ENDPOINT = http://localhost:4567
 
