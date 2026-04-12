@@ -233,7 +233,12 @@ def handler(event, context):
         tmpdir_holder = {}
 
         def fetch_title():
-            title_result['title'], title_result['spokenLanguage'] = get_video_info(youtube_url)
+            try:
+                title_result['title'], title_result['spokenLanguage'] = get_video_info(youtube_url)
+            except Exception as e:
+                print(f'[fetch_title] ERROR: {type(e).__name__}: {e}')
+                title_result['title'] = 'Unknown Title'
+                title_result['spokenLanguage'] = None
 
         def fetch_subtitles():
             tmpdir_holder['dir'] = tempfile.mkdtemp()
