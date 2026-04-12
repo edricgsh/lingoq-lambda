@@ -61,23 +61,41 @@ YT_DLP_BASE_OPTS = {
     'extractor_args': {'youtube': {'player_client': ['android_vr']}},
 }
 
+# Webshare rotating proxy — loaded from WEBSHARE_PROXY_URL env var at cold start.
+# Format: http://dezqsfeo-rotate:<pass>@p.webshare.io:80
+# Webshare assigns a random IP from the pool on each request server-side.
+WEBSHARE_PROXY_URL = os.environ.get('WEBSHARE_PROXY_URL', '')
+if WEBSHARE_PROXY_URL:
+    print(f'[proxy] Using rotating proxy: {WEBSHARE_PROXY_URL.split("@")[1]}')
+else:
+    print('[proxy] WARNING: WEBSHARE_PROXY_URL env var not set — all requests will go direct')
 
-def get_video_info(youtube_url: str) -> tuple[str, str | None]:
-    """Extract video title and spoken language in a single info extraction call."""
-    print(f'[get_video_info] Fetching info for: {youtube_url}')
-    opts = {**YT_DLP_BASE_OPTS, 'quiet': True, 'no_warnings': True, 'skip_download': True, 'noplaylist': True}
+
+def _proxy_opts(opts: dict) -> dict:
+    if not WEBSHARE_PROXY_URL:
+        return opts
+    return {**opts, 'proxy': WEBSHARE_PROXY_URL}
+
+
+def _extract_video_info(youtube_url: str, opts: dict) -> tuple[str, str | None]:
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(youtube_url, download=False)
     title = info.get('title', 'Unknown Title')
-    # Top-level language tag YouTube provides for the video
     lang = info.get('language')
     if not lang:
-        # Fall back: find the language of the best audio format
         for fmt in (info.get('formats') or []):
             if fmt.get('acodec') not in (None, 'none') and fmt.get('language'):
                 lang = fmt['language']
                 break
-    print(f'[get_video_info] Title: "{title}" | Duration: {info.get("duration")}s | Spoken language: {lang}')
+    return title, lang
+
+
+def get_video_info(youtube_url: str) -> tuple[str, str | None]:
+    """Extract video title and spoken language via Webshare proxy."""
+    print(f'[get_video_info] Fetching info for: {youtube_url}')
+    base_opts = {**YT_DLP_BASE_OPTS, 'quiet': True, 'no_warnings': True, 'skip_download': True, 'noplaylist': True}
+    title, lang = _extract_video_info(youtube_url, _proxy_opts(base_opts))
+    print(f'[get_video_info] Title: "{title}" | Spoken language: {lang}')
     return title, lang
 
 
@@ -86,16 +104,15 @@ def _list_vtt_files(output_dir: str) -> list[str]:
 
 
 def _fetch_subtitles_worker(youtube_url: str, output_dir: str, opts: dict, results: dict, key: str) -> None:
-    """Download subtitles with given opts into output_dir, storing found files under results[key]."""
+    """Download subtitles via proxy, storing found VTT files under results[key]."""
     tag = f'[worker:{key}]'
     try:
-        verbose_opts = {**opts, 'quiet': False, 'no_warnings': False}
-        print(f'{tag} Starting download with opts: writesubtitles={opts.get("writesubtitles")}, writeautomaticsub={opts.get("writeautomaticsub")}, langs={opts.get("subtitleslangs")}, outtmpl={opts.get("outtmpl")}')
-        with yt_dlp.YoutubeDL(verbose_opts) as ydl:
+        final_opts = {**_proxy_opts(opts), 'quiet': False, 'no_warnings': False}
+        print(f'{tag} Starting download — langs={opts.get("subtitleslangs")}, proxy={final_opts.get("proxy")}')
+        with yt_dlp.YoutubeDL(final_opts) as ydl:
             ydl.download([youtube_url])
         found = _list_vtt_files(output_dir)
-        all_files = os.listdir(output_dir)
-        print(f'{tag} All files in output_dir: {all_files}')
+        print(f'{tag} All files in output_dir: {os.listdir(output_dir)}')
         print(f'{tag} VTT files found: {found}')
         results[key] = found
     except Exception as e:
@@ -155,7 +172,7 @@ def download_subtitles(youtube_url: str, output_dir: str) -> tuple[str, str]:
     print('[download_subtitles] Trying auto-translated es from en auto-captions')
     auto_trans_dir = os.path.join(output_dir, 'auto_trans')
     os.makedirs(auto_trans_dir, exist_ok=True)
-    opts = {
+    trans_opts = _proxy_opts({
         **YT_DLP_BASE_OPTS,
         'writeautomaticsub': True,
         'subtitleslangs': ['es', 'en-orig'],
@@ -165,8 +182,8 @@ def download_subtitles(youtube_url: str, output_dir: str) -> tuple[str, str]:
         'outtmpl': os.path.join(auto_trans_dir, '%(id)s.%(ext)s'),
         'quiet': True,
         'no_warnings': True,
-    }
-    with yt_dlp.YoutubeDL(opts) as ydl:
+    })
+    with yt_dlp.YoutubeDL(trans_opts) as ydl:
         ydl.download([youtube_url])
 
     files = _list_vtt_files(auto_trans_dir)

@@ -13,6 +13,7 @@ test-local:
 	awslocal lambda invoke \
 		--function-name $(FUNCTION_NAME) \
 		--payload file://test_event.json \
+		--cli-binary-format raw-in-base64-out \
 		--region $(REGION) \
 		--endpoint-url $(ENDPOINT) \
 		/tmp/lambda-response.json && cat /tmp/lambda-response.json
@@ -28,6 +29,11 @@ zip:
 clean:
 	@rm -rf dist/
 	@echo "Cleaned dist directory"
+
+build-terraform: zip
+	@mkdir -p ../terraform/modules/aws/lambda_packages
+	@cp dist/function.zip ../terraform/modules/aws/lambda_packages/subtitle_extractor.zip
+	@echo "Built: terraform/modules/aws/lambda_packages/subtitle_extractor.zip"
 
 docker-build:
 	@echo "Building Docker image..."
