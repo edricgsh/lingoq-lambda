@@ -64,15 +64,20 @@ YT_DLP_BASE_OPTS = {
 # Webshare rotating proxy — loaded from WEBSHARE_PROXY_URL env var at cold start.
 # Format: http://dezqsfeo-rotate:<pass>@p.webshare.io:80
 # Webshare assigns a random IP from the pool on each request server-side.
+# Set USE_PROXY=false to disable (local dev); dev/prod always use the proxy.
 WEBSHARE_PROXY_URL = os.environ.get('WEBSHARE_PROXY_URL', '')
-if WEBSHARE_PROXY_URL:
+_USE_PROXY = os.environ.get('USE_PROXY', 'true').lower() != 'false' and bool(WEBSHARE_PROXY_URL)
+
+if _USE_PROXY:
     print(f'[proxy] Using rotating proxy: {WEBSHARE_PROXY_URL.split("@")[1]}')
+elif WEBSHARE_PROXY_URL:
+    print('[proxy] Proxy disabled via USE_PROXY=false — requests will go direct')
 else:
-    print('[proxy] WARNING: WEBSHARE_PROXY_URL env var not set — all requests will go direct')
+    print('[proxy] WARNING: WEBSHARE_PROXY_URL not set — requests will go direct')
 
 
 def _proxy_opts(opts: dict) -> dict:
-    if not WEBSHARE_PROXY_URL:
+    if not _USE_PROXY:
         return opts
     return {**opts, 'proxy': WEBSHARE_PROXY_URL}
 

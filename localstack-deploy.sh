@@ -19,7 +19,8 @@ PROXY_URL="http://dezqsfeo-rotate:3280zcjc03xc@p.webshare.io:80"
 echo "Seeding proxy URL into LocalStack Secrets Manager..."
 "${SCRIPT_DIR}/../scripts/update-secret.sh" --local --key WEBSHARE_PROXY_URL --value "$PROXY_URL"
 
-LAMBDA_ENV="Variables={WEBSHARE_PROXY_URL=$PROXY_URL}"
+# Local: proxy URL is seeded for reference but USE_PROXY=false keeps requests direct
+LAMBDA_ENV="Variables={WEBSHARE_PROXY_URL=$PROXY_URL,USE_PROXY=false}"
 
 # Create deployment zip
 echo "Creating deployment package..."
