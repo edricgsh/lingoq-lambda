@@ -125,13 +125,14 @@ def _fetch_subtitles_worker(youtube_url: str, output_dir: str, opts: dict, resul
         results[key] = []
 
 
-def download_subtitles(youtube_url: str, output_dir: str) -> tuple[str, str]:
+def download_subtitles(youtube_url: str, output_dir: str, target_lang: str = 'en') -> tuple[str, str]:
     """
     Download subtitles and return (file_path, language).
     Fetches natural and auto-generated subtitles in parallel for each language.
-    Priority: native es → native en → auto es → auto en → auto-translated es.
+    Priority: native target_lang → native en → auto target_lang → auto en → auto-translated target_lang.
     """
-    for lang in ['es', 'en']:
+    langs_to_try = [target_lang] if target_lang == 'en' else [target_lang, 'en']
+    for lang in langs_to_try:
         print(f'[download_subtitles] Fetching native + auto-generated in parallel for lang={lang}')
 
         native_dir = os.path.join(output_dir, f'native_{lang}')
@@ -173,14 +174,15 @@ def download_subtitles(youtube_url: str, output_dir: str) -> tuple[str, str]:
 
         print(f'[download_subtitles] No subtitles for lang={lang}')
 
-    # Last resort: try auto-translated Spanish from English auto-captions
-    print('[download_subtitles] Trying auto-translated es from en auto-captions')
+    # Last resort: try auto-translated target_lang from English auto-captions
+    print(f'[download_subtitles] Trying auto-translated {target_lang} from en auto-captions')
     auto_trans_dir = os.path.join(output_dir, 'auto_trans')
     os.makedirs(auto_trans_dir, exist_ok=True)
+    trans_langs = [target_lang, 'en-orig'] if target_lang != 'en' else ['en-orig']
     trans_opts = _proxy_opts({
         **YT_DLP_BASE_OPTS,
         'writeautomaticsub': True,
-        'subtitleslangs': ['es', 'en-orig'],
+        'subtitleslangs': trans_langs,
         'subtitlesformat': 'vtt',
         'skip_download': True,
         'noplaylist': True,
@@ -195,9 +197,10 @@ def download_subtitles(youtube_url: str, output_dir: str) -> tuple[str, str]:
     if files:
         path = os.path.join(auto_trans_dir, files[0])
         print(f'[download_subtitles] Found auto-translated subtitle: {files[0]}')
-        return path, 'es-auto'
+        return path, f'{target_lang}-auto'
 
-    raise RuntimeError('No subtitles found for the video (tried native, auto-generated, and auto-translated for es and en)')
+    tried = [target_lang] if target_lang == 'en' else [target_lang, 'en']
+    raise RuntimeError(f'No subtitles found for the video (tried native, auto-generated, and auto-translated for {" and ".join(tried)})')
 
 
 def handler(event, context):
@@ -214,6 +217,7 @@ def handler(event, context):
     """
     print(f'[handler] Received event: {json.dumps(event)}')
     youtube_url = event.get('youtube_url')
+    target_language = event.get('language') or 'en'
 
     if not youtube_url:
         print('[handler] Missing youtube_url in event')
@@ -234,7 +238,7 @@ def handler(event, context):
         def fetch_subtitles():
             tmpdir_holder['dir'] = tempfile.mkdtemp()
             try:
-                path, lang = download_subtitles(youtube_url, tmpdir_holder['dir'])
+                path, lang = download_subtitles(youtube_url, tmpdir_holder['dir'], target_language)
                 subtitle_result['path'] = path
                 subtitle_result['language'] = lang
             except Exception as e:
