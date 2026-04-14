@@ -1,6 +1,7 @@
 import json
 import os
 import threading
+import time
 
 import yt_dlp
 
@@ -85,14 +86,57 @@ def _base_info_opts() -> dict:
     })
 
 
+_SIGN_IN_PHRASES = (
+    'sign in to confirm',
+    'sign in to your account',
+    'confirm you\'re not a bot',
+    'confirm you are not a bot',
+    'age-restricted',
+    'age restricted',
+    'this video requires',
+    'account is not allowed',
+    'use --cookies',
+    'use --cookies-from-browser',
+    'confirm your age',
+)
+
+def _is_sign_in_error(exc: Exception) -> bool:
+    """Return True if the exception looks like a transient Google sign-in / bot-check error."""
+    msg = str(exc).lower()
+    return any(phrase in msg for phrase in _SIGN_IN_PHRASES)
+
+
+def _extract_video_info_once(youtube_url: str) -> dict:
+    """Single attempt at extract_info — callers handle retry."""
+    with yt_dlp.YoutubeDL(_base_info_opts()) as ydl:
+        return ydl.extract_info(youtube_url, download=False)
+
+
 def extract_video_info(youtube_url: str) -> dict:
     """
     Single extract_info call that returns the full info dict.
     Raises RuntimeError immediately if no subtitles are available at all.
+    Retries up to 3 times on Google sign-in / bot-check errors (with backoff).
     """
-    print(f'[extract_video_info] Fetching info for: {youtube_url}')
-    with yt_dlp.YoutubeDL(_base_info_opts()) as ydl:
-        info = ydl.extract_info(youtube_url, download=False)
+    max_attempts = 3
+    last_exc: Exception | None = None
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            print(f'[extract_video_info] Attempt {attempt}/{max_attempts} for: {youtube_url}')
+            info = _extract_video_info_once(youtube_url)
+            break
+        except Exception as e:
+            last_exc = e
+            if _is_sign_in_error(e) and attempt < max_attempts:
+                wait = 2 ** attempt  # 2s, 4s
+                print(f'[extract_video_info] Sign-in/bot-check error on attempt {attempt}, retrying in {wait}s: {type(e).__name__}: {e}')
+                time.sleep(wait)
+                continue
+            raise
+    else:
+        # All retries exhausted
+        raise last_exc  # type: ignore[misc]
 
     subs = info.get('subtitles') or {}
     auto_subs = info.get('automatic_captions') or {}
@@ -121,22 +165,31 @@ def _pick_subtitle_url(formats: list[dict]) -> str | None:
 
 
 def _fetch_subtitle_url(url: str, tag: str) -> str | None:
-    """Download a subtitle URL via yt-dlp (respects proxy) and return its text content."""
-    print(f'[{tag}] Fetching subtitle URL directly')
-    try:
-        opts = _proxy_opts({
-            **YT_DLP_BASE_OPTS,
-            'quiet': True,
-            'no_warnings': True,
-        })
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            response = ydl.urlopen(url)
-            content = response.read().decode('utf-8')
-        print(f'[{tag}] Downloaded {len(content)} bytes')
-        return content
-    except Exception as e:
-        print(f'[{tag}] Failed to fetch subtitle URL: {type(e).__name__}: {e}')
-        return None
+    """Download a subtitle URL via yt-dlp (respects proxy) and return its text content.
+    Retries up to 3 times on sign-in/bot-check errors."""
+    max_attempts = 3
+    opts = _proxy_opts({
+        **YT_DLP_BASE_OPTS,
+        'quiet': True,
+        'no_warnings': True,
+    })
+
+    for attempt in range(1, max_attempts + 1):
+        print(f'[{tag}] Fetching subtitle URL (attempt {attempt}/{max_attempts})')
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                response = ydl.urlopen(url)
+                content = response.read().decode('utf-8')
+            print(f'[{tag}] Downloaded {len(content)} bytes')
+            return content
+        except Exception as e:
+            if _is_sign_in_error(e) and attempt < max_attempts:
+                wait = 2 ** attempt  # 2s, 4s
+                print(f'[{tag}] Sign-in/bot-check error on attempt {attempt}, retrying in {wait}s: {type(e).__name__}: {e}')
+                time.sleep(wait)
+                continue
+            print(f'[{tag}] Failed to fetch subtitle URL: {type(e).__name__}: {e}')
+            return None
 
 
 def download_subtitles(info: dict, target_lang: str = 'en') -> tuple[str, str]:
