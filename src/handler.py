@@ -1,55 +1,49 @@
 import json
 import os
-import re
 import threading
 
 import yt_dlp
 
 
-def clean_vtt(vtt_content: str) -> str:
-    """Parse VTT content and return clean plain text."""
-    lines = vtt_content.split('\n')
-    cleaned_lines = []
-    prev_line = ''
+def parse_json3(json_content: str) -> str:
+    """Parse YouTube json3 subtitle format and return clean plain text.
 
-    for line in lines:
-        line = line.strip()
+    json3 uses a rolling-window format:
+    - aAppend absent/0: starts a NEW display window
+    - aAppend=1: appends to the current window
+    Each window maps to one subtitle screen; we collect all text and join.
+    """
+    import json as _json
+    try:
+        data = _json.loads(json_content)
+    except Exception:
+        return ''
 
-        # Skip WEBVTT header and empty lines
-        if line.startswith('WEBVTT') or line == '':
+    events = data.get('events') or []
+    text_chunks: list[str] = []
+    current_window: list[str] = []
+
+    for event in events:
+        segs = event.get('segs')
+        if not segs:
             continue
+        seg_texts = [s.get('utf8', '') for s in segs]
 
-        # Skip timestamp lines (e.g., 00:00:01.000 --> 00:00:04.000)
-        if re.match(r'^\d{2}:\d{2}:\d{2}[.,]\d{3}\s*-->', line):
-            continue
+        if event.get('aAppend') == 1 and current_window:
+            current_window.extend(seg_texts)
+        else:
+            if current_window:
+                text = ''.join(current_window).strip()
+                if text:
+                    text_chunks.append(text)
+            current_window = seg_texts
 
-        # Skip NOTE and STYLE blocks
-        if line.startswith('NOTE') or line.startswith('STYLE'):
-            continue
+    if current_window:
+        text = ''.join(current_window).strip()
+        if text:
+            text_chunks.append(text)
 
-        # Skip pure numeric cue identifiers
-        if re.match(r'^\d+$', line):
-            continue
-
-        # Remove HTML tags like <c>, </c>, <b>, etc.
-        line = re.sub(r'<[^>]+>', '', line)
-
-        # Remove timing tags like <00:00:01.234>
-        line = re.sub(r'<\d{2}:\d{2}:\d{2}\.\d{3}>', '', line)
-
-        # Strip extra whitespace
-        line = line.strip()
-
-        # Skip empty lines after cleaning
-        if not line:
-            continue
-
-        # Deduplicate consecutive identical lines
-        if line != prev_line:
-            cleaned_lines.append(line)
-            prev_line = line
-
-    return ' '.join(cleaned_lines)
+    return ' '.join(text_chunks)
 
 
 # Use android_vr client to bypass YouTube's PO (Proof of Origin) token requirement.
@@ -121,9 +115,9 @@ def extract_video_info(youtube_url: str) -> dict:
 
 
 def _pick_subtitle_url(formats: list[dict]) -> str | None:
-    """Return the VTT URL from a list of subtitle format dicts, preferring vtt."""
+    """Return the subtitle URL from a list of format dicts, preferring json3."""
     by_ext = {f['ext']: f['url'] for f in formats if f.get('url') and f.get('ext')}
-    return by_ext.get('vtt') or by_ext.get('srt') or next(iter(by_ext.values()), None)
+    return by_ext.get('json3') or by_ext.get('vtt') or by_ext.get('srt') or next(iter(by_ext.values()), None)
 
 
 def _fetch_subtitle_url(url: str, tag: str) -> str | None:
@@ -256,10 +250,30 @@ def handler(event, context):
         print(f'[handler] Processing video: "{title}" spoken_language={spoken_language}')
 
         # Download only the selected subtitle file directly via URL fetch.
-        vtt_content, language = download_subtitles(info, target_language)
+        raw_content, language = download_subtitles(info, target_language)
 
-        print(f'[handler] Raw VTT size: {len(vtt_content)} chars')
-        clean_text = clean_vtt(vtt_content)
+        print(f'[handler] Raw subtitle size: {len(raw_content)} chars')
+        # Detect format: json3 starts with '{', VTT starts with 'WEBVTT'
+        is_json3 = raw_content.lstrip().startswith('{')
+        if is_json3:
+            clean_text = parse_json3(raw_content)
+        else:
+            # Fallback: strip VTT markup with a simple approach
+            import re as _re
+            lines = []
+            prev = ''
+            for line in raw_content.split('\n'):
+                line = line.strip()
+                if not line or line.startswith('WEBVTT') or line.startswith('NOTE') or line.startswith('STYLE'):
+                    continue
+                if _re.match(r'^\d{2}:\d{2}:\d{2}[.,]\d{3}\s*-->', line) or _re.match(r'^\d+$', line):
+                    continue
+                line = _re.sub(r'<[^>]+>', '', line).strip()
+                if line and line != prev:
+                    lines.append(line)
+                    prev = line
+            clean_text = ' '.join(lines)
+
         print(f'[handler] Cleaned subtitle size: {len(clean_text)} chars')
 
         if not clean_text:
@@ -270,14 +284,16 @@ def handler(event, context):
             }
 
         print(f'[handler] SUCCESS — title="{title}" spoken_language="{spoken_language}" subtitle_language="{language}" subtitle_length={len(clean_text)}')
-        return {
+        result = {
             'statusCode': 200,
             'title': title,
             'language': language,
             'spokenLanguage': spoken_language,
             'subtitles': clean_text,
-            'subtitlesVtt': vtt_content,
         }
+        if is_json3:
+            result['subtitleJson'] = json.loads(raw_content)
+        return result
 
     except RuntimeError as e:
         print(f'[handler] RuntimeError: {e}')
