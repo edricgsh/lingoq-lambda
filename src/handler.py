@@ -356,7 +356,12 @@ def handler(event, context):
         }
     except Exception as e:
         print(f'[handler] Unexpected error: {type(e).__name__}: {e}')
+        if _is_sign_in_error(e):
+            return {
+                'statusCode': 422,
+                'errorMessage': 'This video is not available for processing. It may be age-restricted or region-locked.',
+            }
         return {
             'statusCode': 500,
-            'errorMessage': f'Unexpected error: {str(e)}',
+            'errorMessage': 'An unexpected error occurred while processing the video.',
         }
