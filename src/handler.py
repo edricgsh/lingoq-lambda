@@ -192,16 +192,25 @@ def _fetch_subtitle_url(url: str, tag: str) -> str | None:
             return None
 
 
-# YouTube uses regional variants for Chinese subtitles (zh-Hans, zh-Hant, zh-CN, zh-TW)
-# rather than bare 'zh'. Expand 'zh' to try all common variants in priority order.
+# YouTube uses regional variants for some languages rather than bare ISO codes.
+# Expand to try all common variants in priority order.
 _ZH_VARIANTS = ['zh-Hans', 'zh-Hant', 'zh-CN', 'zh-TW', 'zh-HK', 'zh']
+# es-419 = Latin America (very common), es-ES = Spain
+_ES_VARIANTS = ['es', 'es-419', 'es-ES', 'es-MX', 'es-US']
+# pt-BR = Brazil (dominant on YouTube), pt-PT = Portugal
+_PT_VARIANTS = ['pt', 'pt-BR', 'pt-PT']
+
+_LANG_VARIANTS: dict[str, list[str]] = {
+    'zh': _ZH_VARIANTS,
+    'es': _ES_VARIANTS,
+    'pt': _PT_VARIANTS,
+}
 
 def _expand_lang_candidates(lang: str) -> list[str]:
     """Return a list of language code candidates to try for a given lang code.
-    For 'zh', returns all known Chinese variant codes so YouTube track lookups succeed."""
-    if lang == 'zh':
-        return _ZH_VARIANTS
-    return [lang]
+    For languages with regional variants (zh, es, pt), returns all known variant
+    codes so YouTube track lookups succeed."""
+    return _LANG_VARIANTS.get(lang, [lang])
 
 
 def download_subtitles(info: dict, target_lang: str = 'en') -> tuple[str, str]:
