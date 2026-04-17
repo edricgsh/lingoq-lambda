@@ -194,22 +194,24 @@ def _fetch_subtitle_url(url: str, tag: str) -> str | None:
 
 # YouTube uses regional variants for some languages rather than bare ISO codes.
 # Expand to try all common variants in priority order.
-_ZH_VARIANTS = ['zh-Hans', 'zh-Hant', 'zh-CN', 'zh-TW', 'zh-HK', 'zh']
-# es-419 = Latin America (very common), es-ES = Spain
-_ES_VARIANTS = ['es', 'es-419', 'es-ES', 'es-MX', 'es-US']
-# pt-BR = Brazil (dominant on YouTube), pt-PT = Portugal
-_PT_VARIANTS = ['pt', 'pt-BR', 'pt-PT']
-
+# Variants confirmed by inspecting real YouTube subtitle tracks across multiple videos.
 _LANG_VARIANTS: dict[str, list[str]] = {
-    'zh': _ZH_VARIANTS,
-    'es': _ES_VARIANTS,
-    'pt': _PT_VARIANTS,
+    # Chinese: script-based (zh-Hans/zh-Hant) in auto-captions; region-based in manual subs
+    'zh': ['zh-Hans', 'zh-Hant', 'zh-CN', 'zh-TW', 'zh-HK', 'zh'],
+    # Spanish: es-419 (Latin America) is the most common regional code on YouTube
+    'es': ['es', 'es-419', 'es-ES', 'es-MX', 'es-US'],
+    # Portuguese: pt-BR (Brazil) dominates; pt-PT (Portugal) also common
+    'pt': ['pt', 'pt-BR', 'pt-PT'],
+    # French: fr-CA (Canadian French) seen on TED and other multilingual channels
+    'fr': ['fr', 'fr-CA'],
+    # Dutch: nl-NL seen on some channels (e.g. Kurzgesagt)
+    'nl': ['nl', 'nl-NL'],
 }
 
 def _expand_lang_candidates(lang: str) -> list[str]:
     """Return a list of language code candidates to try for a given lang code.
-    For languages with regional variants (zh, es, pt), returns all known variant
-    codes so YouTube track lookups succeed."""
+    For languages with regional variants, returns all known variant codes so
+    YouTube track lookups succeed. Variants confirmed from real YouTube subtitle data."""
     return _LANG_VARIANTS.get(lang, [lang])
 
 
