@@ -192,6 +192,18 @@ def _fetch_subtitle_url(url: str, tag: str) -> str | None:
             return None
 
 
+# YouTube uses regional variants for Chinese subtitles (zh-Hans, zh-Hant, zh-CN, zh-TW)
+# rather than bare 'zh'. Expand 'zh' to try all common variants in priority order.
+_ZH_VARIANTS = ['zh-Hans', 'zh-Hant', 'zh-CN', 'zh-TW', 'zh-HK', 'zh']
+
+def _expand_lang_candidates(lang: str) -> list[str]:
+    """Return a list of language code candidates to try for a given lang code.
+    For 'zh', returns all known Chinese variant codes so YouTube track lookups succeed."""
+    if lang == 'zh':
+        return _ZH_VARIANTS
+    return [lang]
+
+
 def download_subtitles(info: dict, target_lang: str = 'en') -> tuple[str, str]:
     """
     Select and download the best available subtitle from the pre-fetched info dict.
@@ -203,7 +215,9 @@ def download_subtitles(info: dict, target_lang: str = 'en') -> tuple[str, str]:
     subs = info.get('subtitles') or {}
     auto_subs = info.get('automatic_captions') or {}
 
-    langs_to_try = [target_lang] if target_lang == 'en' else [target_lang, 'en']
+    # Expand 'zh' to its regional variants so YouTube track lookups succeed
+    target_lang_candidates = _expand_lang_candidates(target_lang)
+    langs_to_try = target_lang_candidates if target_lang == 'en' else target_lang_candidates + ['en']
 
     for lang in langs_to_try:
         # Try native first, then auto-generated, in parallel
