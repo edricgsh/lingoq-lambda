@@ -192,6 +192,29 @@ def _fetch_subtitle_url(url: str, tag: str) -> str | None:
             return None
 
 
+# YouTube uses regional variants for some languages rather than bare ISO codes.
+# Expand to try all common variants in priority order.
+# Variants confirmed by inspecting real YouTube subtitle tracks across multiple videos.
+_LANG_VARIANTS: dict[str, list[str]] = {
+    # Chinese: script-based (zh-Hans/zh-Hant) in auto-captions; region-based in manual subs
+    'zh': ['zh-Hans', 'zh-Hant', 'zh-CN', 'zh-TW', 'zh-HK', 'zh'],
+    # Spanish: es-419 (Latin America) is the most common regional code on YouTube
+    'es': ['es', 'es-419', 'es-ES', 'es-MX', 'es-US'],
+    # Portuguese: pt-BR (Brazil) dominates; pt-PT (Portugal) also common
+    'pt': ['pt', 'pt-BR', 'pt-PT'],
+    # French: fr-CA (Canadian French) seen on TED and other multilingual channels
+    'fr': ['fr', 'fr-CA'],
+    # Dutch: nl-NL seen on some channels (e.g. Kurzgesagt)
+    'nl': ['nl', 'nl-NL'],
+}
+
+def _expand_lang_candidates(lang: str) -> list[str]:
+    """Return a list of language code candidates to try for a given lang code.
+    For languages with regional variants, returns all known variant codes so
+    YouTube track lookups succeed. Variants confirmed from real YouTube subtitle data."""
+    return _LANG_VARIANTS.get(lang, [lang])
+
+
 def download_subtitles(info: dict, target_lang: str = 'en') -> tuple[str, str]:
     """
     Select and download the best available subtitle from the pre-fetched info dict.
@@ -203,7 +226,9 @@ def download_subtitles(info: dict, target_lang: str = 'en') -> tuple[str, str]:
     subs = info.get('subtitles') or {}
     auto_subs = info.get('automatic_captions') or {}
 
-    langs_to_try = [target_lang] if target_lang == 'en' else [target_lang, 'en']
+    # Expand 'zh' to its regional variants so YouTube track lookups succeed
+    target_lang_candidates = _expand_lang_candidates(target_lang)
+    langs_to_try = target_lang_candidates if target_lang == 'en' else target_lang_candidates + ['en']
 
     for lang in langs_to_try:
         # Try native first, then auto-generated, in parallel
@@ -356,7 +381,12 @@ def handler(event, context):
         }
     except Exception as e:
         print(f'[handler] Unexpected error: {type(e).__name__}: {e}')
+        if _is_sign_in_error(e):
+            return {
+                'statusCode': 422,
+                'errorMessage': 'This video is not available for processing. It may be age-restricted or region-locked.',
+            }
         return {
             'statusCode': 500,
-            'errorMessage': f'Unexpected error: {str(e)}',
+            'errorMessage': 'An unexpected error occurred while processing the video.',
         }
