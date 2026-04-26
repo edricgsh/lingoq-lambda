@@ -287,21 +287,35 @@ def download_subtitles(info: dict, target_lang: str = 'en') -> tuple[str, str]:
     raise RuntimeError(f'No subtitles found for the video (tried native, auto-generated, and auto-translated for {" and ".join(tried)})')
 
 
+def list_subtitle_tracks(info: dict) -> list[dict]:
+    """Return all available subtitle tracks from an already-fetched info dict."""
+    tracks = []
+    for lang, formats in (info.get('subtitles') or {}).items():
+        name = next((f.get('name') for f in formats if f.get('name')), lang)
+        tracks.append({'lang': lang, 'name': name, 'kind': 'manual'})
+    for lang, formats in (info.get('automatic_captions') or {}).items():
+        name = next((f.get('name') for f in formats if f.get('name')), lang)
+        tracks.append({'lang': lang, 'name': name, 'kind': 'auto'})
+    return tracks
+
+
 def handler(event, context):
     """
-    Lambda handler for subtitle extraction.
+    Lambda handler for subtitle extraction and track listing.
 
-    Input:
-        { "youtube_url": "...", "video_id": "..." }
+    Input (list):    { "action": "list",    "youtube_url": "..." }
+    Input (extract): { "action": "extract", "youtube_url": "...", "video_id": "...", "language": "..." }
+                     (action defaults to "extract" when omitted for backwards compatibility)
 
-    Output:
+    Output (list, success):
+        { "statusCode": 200, "title": "...", "spokenLanguage": "...", "tracks": [...] }
+    Output (extract, success):
         { "statusCode": 200, "title": "...", "language": "...", "subtitles": "..." }
-        or
-        { "statusCode": 422, "errorMessage": "..." }
-        or
-        { "statusCode": 500, "errorMessage": "..." }
+    Output (error):
+        { "statusCode": 422|500, "errorMessage": "..." }
     """
     print(f'[handler] Received event: {json.dumps(event)}')
+    action = event.get('action', 'extract')
     youtube_url = event.get('youtube_url')
     target_language = event.get('language') or 'en'
 
@@ -311,6 +325,33 @@ def handler(event, context):
             'statusCode': 400,
             'errorMessage': 'youtube_url is required',
         }
+
+    if action == 'list':
+        try:
+            info = extract_video_info(youtube_url)
+            title = info.get('title', 'Unknown Title')
+            spoken_language = info.get('language')
+            if not spoken_language:
+                for fmt in (info.get('formats') or []):
+                    if fmt.get('acodec') not in (None, 'none') and fmt.get('language'):
+                        spoken_language = fmt['language']
+                        break
+            tracks = list_subtitle_tracks(info)
+            print(f'[handler] list action — title="{title}" spokenLanguage={spoken_language} tracks={len(tracks)}')
+            return {
+                'statusCode': 200,
+                'title': title,
+                'spokenLanguage': spoken_language,
+                'tracks': tracks,
+            }
+        except RuntimeError as e:
+            print(f'[handler] list RuntimeError: {e}')
+            return {'statusCode': 422, 'errorMessage': str(e)}
+        except Exception as e:
+            print(f'[handler] list Unexpected error: {type(e).__name__}: {e}')
+            if _is_sign_in_error(e):
+                return {'statusCode': 422, 'errorMessage': 'This video is not available for processing. It may be age-restricted or region-locked.'}
+            return {'statusCode': 500, 'errorMessage': 'An unexpected error occurred while listing subtitle tracks.'}
 
     try:
         # Single extract_info call: gets title, language, and subtitle availability.
